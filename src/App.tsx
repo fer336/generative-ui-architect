@@ -19,6 +19,13 @@ import DynamicRenderer from "./components/DynamicRenderer";
 import DocsTab from "./components/DocsTab";
 import ArchTab from "./components/ArchTab";
 import OrgTab from "./components/OrgTab";
+import { getMockResponse } from "./mockResponses";
+
+// When true (set at build time via VITE_STATIC_DEMO=true), the app runs
+// entirely on canned sample data instead of calling the real
+// POST /api/generative-ui endpoint. Used for the static GitHub Pages demo,
+// which cannot host the Express server or keep GEMINI_API_KEY secret.
+const isStaticDemo = import.meta.env.VITE_STATIC_DEMO === "true";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"sandbox" | "docs" | "arch" | "org">("sandbox");
@@ -86,19 +93,28 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      const response = await fetch("/api/generative-ui", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ prompt: promptText }),
-      });
+      let data: GenerativeUIResponse;
 
-      if (!response.ok) {
-        throw new Error("No se pudo conectar al servidor de Generative UI.");
+      if (isStaticDemo) {
+        // Static demo: no server to call. Keep a short artificial delay so
+        // the loading-phrases mechanism still plays and the UX feels alive.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        data = getMockResponse(promptText);
+      } else {
+        const response = await fetch("/api/generative-ui", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ prompt: promptText }),
+        });
+
+        if (!response.ok) {
+          throw new Error("No se pudo conectar al servidor de Generative UI.");
+        }
+
+        data = await response.json();
       }
-
-      const data: GenerativeUIResponse = await response.json();
 
       const aiMsg: ChatMessage = {
         id: Math.random().toString(),
@@ -162,7 +178,14 @@ export default function App() {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-        
+
+        {isStaticDemo && (
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[11px] font-bold text-amber-800">
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            Demo estática — datos de muestra, sin conexión real a Gemini.
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="flex border-b border-slate-200 mb-6 overflow-x-auto gap-1 py-1 no-scrollbar">
           <button

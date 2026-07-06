@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: process.env.GH_PAGES === 'true' ? '/generative-ui-architect/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -4,6 +4,7 @@ A demo app that lets a user describe a request in natural language and dynamical
 
 ## Table of Contents
 
+- [Live Demo](#live-demo)
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
@@ -13,6 +14,12 @@ A demo app that lets a user describe a request in natural language and dynamical
 - [Features](#features)
 - [API Contract: POST /api/generative-ui](#api-contract-post-apigenerative-ui)
 - [Known Gaps](#known-gaps)
+
+## Live Demo
+
+A static build of this app is deployed to GitHub Pages: **https://fer336.github.io/generative-ui-architect/**
+
+GitHub Pages only serves static files — it cannot host the Express server (`server.ts`) or keep `GEMINI_API_KEY` secret. So the Pages deployment runs entirely on **canned/mock sample data** instead of live Gemini calls (see `src/mockResponses.ts`); a visible banner in the UI makes this clear so nobody mistakes it for a live AI backend. For the real experience — actual Gemini-backed generation — run the app locally following the [Setup](#setup) section below.
 
 ## Overview
 
