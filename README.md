@@ -9,6 +9,7 @@ A demo app that lets a user describe a request in natural language and dynamical
 - [Setup](#setup)
 - [Available Scripts](#available-scripts)
 - [Project Structure](#project-structure)
+- [Diagrams](#diagrams)
 - [Features](#features)
 - [API Contract: POST /api/generative-ui](#api-contract-post-apigenerative-ui)
 - [Known Gaps](#known-gaps)
@@ -70,6 +71,151 @@ src/
 ```
 
 `src/types.ts` and `server.ts` are the source of truth for the exact request/response shape — see [API Contract](#api-contract-post-apigenerative-ui) below.
+
+## Diagrams
+
+The diagrams below are rendered with GitHub-native Mermaid fenced code blocks. They are derived directly from the source (`types.ts`, `App.tsx`, `server.ts`, `DynamicRenderer.tsx`, `OrgTab.tsx`) — no services, classes, or data stores beyond what is actually implemented are shown.
+
+### Software Architecture
+
+The runtime is a single Express process that either proxies to Vite's dev middleware or serves the built static bundle, plus one outbound call to the Gemini API. There is no database, queue, or additional backend service.
+
+```mermaid
+flowchart LR
+    User["User (Browser)"] -->|HTTP| SPA["React 19 SPA"]
+    SPA -->|"fetch POST /api/generative-ui"| Express["Express Server (server.ts)"]
+    Express -->|"dev mode"| ViteMW["Vite Dev Middleware (HMR)"]
+    Express -->|"prod mode"| StaticDist["Static dist/ serving"]
+    Express -->|"ai.models.generateContent()"| Gemini["Google Gemini API (external, via @google/genai)"]
+    Gemini -->|"JSON text response"| Express
+    Express -->|"GenerativeUIResponse JSON"| SPA
+```
+
+### Sequence Diagram
+
+This traces one full request: a user prompt in the Sandbox tab through Express and Gemini, back to `DynamicRenderer`.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant App as Sandbox UI (App.tsx)
+    participant Srv as Express (/api/generative-ui)
+    participant Gemini as Gemini API (@google/genai)
+    participant DR as DynamicRenderer
+
+    U->>App: Type prompt or click preset
+    App->>App: handleSendPrompt() adds user ChatMessage to state
+    App->>Srv: POST /api/generative-ui { prompt }
+    Srv->>Gemini: generateContent(prompt, responseSchema)
+    Gemini-->>Srv: JSON text (GenerativeUIResponse shape)
+    Srv->>Srv: JSON.parse(text)
+    Srv-->>App: 200 GenerativeUIResponse
+    App->>App: append AI ChatMessage carrying generativeUI
+    App->>DR: DynamicRenderer(generativeUI)
+    DR->>DR: dispatch on componentType
+    DR-->>U: rendered chart / table / metrics / alert / list
+```
+
+### Component Diagram
+
+`App.tsx` owns all state and switches between four tabs; only the Sandbox tab uses `DynamicRenderer`, which internally dispatches to one of five render functions based on `componentType`. `DocsTab`, `ArchTab`, and `OrgTab` are self-contained and take no props.
+
+```mermaid
+flowchart TD
+    App["App.tsx (state: activeTab, messages, inputPrompt, isGenerating)"]
+    App -->|"activeTab === 'sandbox'"| Sandbox["Inline Sandbox JSX (chat panel + Viewport)"]
+    App -->|"activeTab === 'docs'"| DocsTab["DocsTab.tsx"]
+    App -->|"activeTab === 'arch'"| ArchTab["ArchTab.tsx"]
+    App -->|"activeTab === 'org'"| OrgTab["OrgTab.tsx"]
+
+    Sandbox --> DynamicRenderer["DynamicRenderer"]
+    DynamicRenderer -->|"componentType === 'chart'"| renderChart["renderChart()"]
+    DynamicRenderer -->|"componentType === 'table'"| renderTable["renderTable()"]
+    DynamicRenderer -->|"componentType === 'metrics'"| renderMetrics["renderMetrics()"]
+    DynamicRenderer -->|"componentType === 'alert'"| renderAlert["renderAlert()"]
+    DynamicRenderer -->|"componentType === 'list'"| renderList["renderList()"]
+```
+
+### Type/Interface Relationships
+
+This codebase has no classes — everything is functional components and hooks — so a UML class diagram in the strict OO sense doesn't apply. The block below uses Mermaid's `classDiagram` syntax purely to express the shape and containment relationships between the TypeScript interfaces/types in `types.ts`; read every box as a `type`/`interface`, not an instantiable class.
+
+```mermaid
+classDiagram
+    note "These boxes are TypeScript interfaces/types from types.ts, not object-oriented classes — this codebase defines no classes."
+
+    class GenerativeUIResponse {
+        +ComponentType componentType
+        +string explanation
+        +string title
+        +DataItem[] data
+        +ChartConfig chartConfig?
+        +AlertConfig alertConfig?
+    }
+
+    class DataItem {
+        +string label
+        +number value
+        +string secondaryValue?
+        +string color?
+    }
+
+    class ChartConfig {
+        +string type
+        +string xAxisKey?
+        +string yAxisKey?
+    }
+
+    class AlertConfig {
+        +string status
+        +string actionLabel?
+    }
+
+    class ChatMessage {
+        +string id
+        +string sender
+        +Date timestamp
+        +string text
+        +GenerativeUIResponse generativeUI?
+        +boolean isLoading?
+    }
+
+    GenerativeUIResponse "1" --> "0..*" DataItem : contains
+    GenerativeUIResponse "1" --> "0..1" ChartConfig : optional
+    GenerativeUIResponse "1" --> "0..1" AlertConfig : optional
+    ChatMessage "1" --> "0..1" GenerativeUIResponse : optional
+```
+
+### Entity-Relationship
+
+Not applicable — omitted intentionally. There is no persistence layer anywhere in this codebase: no database, ORM, or schema/migration files exist (confirmed via `package.json` and the file tree). Every `GenerativeUIResponse` is generated fresh by Gemini per request and held only in React state (`App.tsx`'s `messages` array); nothing survives a page refresh. An ER diagram would misrepresent the app by implying persisted, related tables that don't exist.
+
+### Organizational Chart
+
+This depicts the **fictional pitch-deck org chart** shown inside the app's Org tab (`OrgTab.tsx`) — a hypothetical team for a hypothetical commercialization pitch, not the real team behind this repository. The underlying `OrgNode` data is a flat list keyed by roadmap phase (Fase 1-5) with no parent/child field, so all four specialist roles are shown as direct reports to the CEO rather than inferring a multi-level hierarchy that isn't in the data.
+
+```mermaid
+flowchart TD
+    CEO["CEO & Product Manager<br/>Fase 1: Concepción y Financiamiento"]
+    AI["Director de IA & Prompt Engineer<br/>Fase 2: Prototipado y Validación del Modelo"]
+    FE["Líder Frontend (Architect)<br/>Fase 3: Desarrollo del Sistema de Diseño"]
+    QA["Ingeniero de QA & Ciberseguridad<br/>Fase 4: Pruebas de Estrés y Contingencia"]
+    SALES["Ventas, Marketing & DevRel<br/>Fase 5: Comercialización y Puesta en Venta"]
+
+    CEO --> AI
+    CEO --> FE
+    CEO --> QA
+    CEO --> SALES
+```
+
+### Design Patterns
+
+- **Discriminated-union rendering dispatch** — `DynamicRenderer` switches on the `componentType` discriminant (`"chart" | "table" | "metrics" | "alert" | "list"`) to pick one of five internal render functions. This is plain conditional dispatch on a TypeScript discriminated union, not a formal GoF Strategy pattern with pluggable strategy objects/classes.
+- **Backend-for-Frontend (BFF) / API-key isolation** — `server.ts` proxies every Gemini call so `GEMINI_API_KEY` never reaches the browser; the frontend only ever talks to the app's own `/api/generative-ui` endpoint.
+- **Schema-constrained (contract-first) LLM generation** — the Gemini call in `server.ts` passes a `responseSchema` (a `Type.OBJECT` JSON-Schema-like config) so the model's output is constrained to match `GenerativeUIResponse`, instead of relying on prompt instructions alone.
+- **Controlled components** — the prompt `<input>` in `App.tsx` is bound via React `value`/`onChange` state, the standard controlled-component pattern.
+
+No classic GoF patterns (Factory, Singleton, Observer, Repository, etc.) are used in this codebase — there are no classes at all, only functional components and hooks, so this list is intentionally limited to what's actually present.
 
 ## Features
 
