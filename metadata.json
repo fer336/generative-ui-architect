@@ -1,0 +1,6 @@
+{
+  "name": "Generative UI Architect",
+  "description": "Interactive guide and live sandbox demonstrating Generative UI architecture, company organizational structures, and software development lifecycle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
