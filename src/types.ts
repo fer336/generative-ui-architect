@@ -1,4 +1,5 @@
-export type ComponentType = "chart" | "table" | "metrics" | "alert" | "list";
+import type { ComponentType } from "./registry/componentRegistry";
+export type { ComponentType };
 
 export interface ChartConfig {
   type: "bar" | "line" | "pie" | "area";
