@@ -1,8 +1,11 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { getProvider } from "./src/providers";
+import { validateGenerativeUIResponse } from "./src/providers/validate";
+import { componentRegistry } from "./src/registry/componentRegistry";
+import { assembleResponseSchema, buildSystemInstruction } from "./src/registry/schema";
 
 // Load environment variables
 dotenv.config();
@@ -13,15 +16,14 @@ const PORT = 3000;
 // Middleware
 app.use(express.json());
 
-// Initialize Gemini on the server side
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
-  }
-});
+// Select and validate the active LLM provider on the server side. A throw
+// here (invalid/unset LLM_PROVIDER, missing API key) happens synchronously
+// at module load time, before `startServer()`/`app.listen()` runs below —
+// same eager-init lifecycle position as the previous Gemini-only client.
+const provider = getProvider();
+
+const systemInstruction = buildSystemInstruction(componentRegistry);
+const schema = assembleResponseSchema(componentRegistry);
 
 // Server-side API endpoint for Generative UI Simulation
 app.post("/api/generative-ui", async (req, res) => {
@@ -32,95 +34,18 @@ app.post("/api/generative-ui", async (req, res) => {
   }
 
   try {
-    const systemInstruction = `Eres un motor inteligente de Generative UI. Tu trabajo consiste en recibir una solicitud del usuario (por ejemplo, reporte de finanzas, lista de tareas, alertas, KPIs) y determinar cuál es el componente de interfaz de usuario más adecuado para representarlo y proveer los datos limpios en un formato estructurado.
-
-Tipos de componentes soportados:
-1. 'chart': Ideal cuando el usuario pide visualizaciones, tendencias, desglose de gastos, comparación de valores, etc. Debes sugerir la configuración del gráfico (barras, líneas, área, pastel).
-2. 'table': Ideal para listas ordenadas con múltiples columnas o datos financieros detallados con etiquetas claras.
-3. 'metrics': Ideal para tableros de control con KPIs clave, resúmenes rápidos, balance general, etc.
-4. 'alert': Ideal cuando el usuario reporta un problema, pide una evaluación crítica o necesita atención inmediata ante un peligro o éxito de finanzas.
-5. 'list': Ideal para listas de tareas, pasos a seguir, recordatorios o descripciones simples.
-
-Reglas para los datos:
-- Retorna datos realistas que se ajusten perfectamente a la solicitud del usuario.
-- En 'chartConfig', define el tipo correcto de gráfico: 'bar', 'line', 'area' o 'pie'.
-- Provee un campo de explicación claro, explicando amigablemente por qué elegiste esta representación y un resumen rápido de los datos presentados.
-- Las etiquetas de los items deben ser claras y cortas. Los valores numéricos deben representar cantidades reales acordes a la solicitud.
-- Sugiere colores de Tailwind coherentes en el campo 'color' para cada item de datos (por ejemplo, 'emerald' para ganancias, 'rose' para gastos elevados, 'sky' para tecnología, 'amber' para advertencias).`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            componentType: {
-              type: Type.STRING,
-              description: "The UI component type to render: 'chart', 'table', 'metrics', 'alert', or 'list'",
-            },
-            explanation: {
-              type: Type.STRING,
-              description: "A friendly, conversational explanation of why this component was chosen and a brief summary of the insights.",
-            },
-            title: {
-              type: Type.STRING,
-              description: "An elegant, descriptive title for the generated component.",
-            },
-            chartConfig: {
-              type: Type.OBJECT,
-              properties: {
-                type: { 
-                  type: Type.STRING, 
-                  description: "The visual style of the chart: 'bar', 'line', 'pie', or 'area'" 
-                },
-                xAxisKey: { type: Type.STRING, description: "Name of the key used for the X-axis (usually 'label')" },
-                yAxisKey: { type: Type.STRING, description: "Name of the key used for the Y-axis (usually 'value')" },
-              },
-              description: "Required configuration if componentType is 'chart'",
-            },
-            data: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  label: { type: Type.STRING, description: "The label or categories name (e.g. 'Comida', 'Alquiler', 'Enero')" },
-                  value: { type: Type.NUMBER, description: "The primary numeric value (e.g. 1500, 350)" },
-                  secondaryValue: { type: Type.STRING, description: "An optional secondary text, state, or currency format (e.g. '$1,500.00', 'Completo', 'Alta')" },
-                  color: { type: Type.STRING, description: "Suggested Tailwind color base name: 'emerald', 'sky', 'rose', 'amber', 'indigo', 'violet', 'orange'" }
-                },
-                required: ["label", "value"]
-              },
-              description: "The dataset to populate the UI element.",
-            },
-            alertConfig: {
-              type: Type.OBJECT,
-              properties: {
-                status: { type: Type.STRING, description: "The status indicator: 'success', 'warning', 'info', or 'error'" },
-                actionLabel: { type: Type.STRING, description: "The button or link text for a suggested primary call to action" }
-              },
-              description: "Required configuration if componentType is 'alert'",
-            }
-          },
-          required: ["componentType", "explanation", "title", "data"]
-        }
-      }
+    const rawResponse = await provider.generateStructuredUI({
+      prompt,
+      systemInstruction,
+      schema,
     });
-
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error("Empty response from Gemini model.");
-    }
-
-    const parsedResponse = JSON.parse(resultText);
+    const parsedResponse = validateGenerativeUIResponse(rawResponse);
     res.json(parsedResponse);
   } catch (error: any) {
-    console.error("Error generating UI from Gemini:", error);
-    res.status(500).json({ 
-      error: "Ocurrió un error al procesar tu solicitud interactiva.", 
-      details: error.message 
+    console.error(`Error generating UI from ${provider.name}:`, error);
+    res.status(500).json({
+      error: "Ocurrió un error al procesar tu solicitud interactiva.",
+      details: error.message
     });
   }
 });

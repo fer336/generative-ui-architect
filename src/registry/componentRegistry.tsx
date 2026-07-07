@@ -16,14 +16,13 @@ import {
   LucideIcon,
 } from "lucide-react";
 import type { GenerativeUIResponse } from "../types";
+import type { JSONSchemaObject } from "../providers/types";
 
-/**
- * Minimal structural JSON Schema type used by the registry and (later)
- * by the provider adapters. This is intentionally plain, provider-agnostic
- * JSON Schema — NOT Gemini's `Type`-enum tree. That translation happens
- * at the Gemini adapter boundary (src/providers/gemini.ts, a later slice).
- */
-export type JSONSchemaObject = Record<string, unknown>;
+// `JSONSchemaObject` now lives canonically in `src/providers/types.ts`
+// (shared with every provider adapter). Re-exported here so existing
+// importers of `registry/componentRegistry` (e.g. `registry/schema.ts`)
+// keep working without change.
+export type { JSONSchemaObject };
 
 /** Props every registry-driven card component receives. */
 type CardPayload = Omit<GenerativeUIResponse, "componentType">;
@@ -45,16 +44,29 @@ export interface ComponentRegistryEntry {
   Component: React.ComponentType<{ payload: CardPayload }>;
 }
 
-/** Shared JSON Schema fragment for a single `DataItem`. */
+/**
+ * Shared JSON Schema fragment for a single `DataItem`.
+ *
+ * `secondaryValue`/`color` are optional in `DataItem` (see `src/types.ts`),
+ * but every property is listed in `required` and typed as a nullable union
+ * (`["string", "null"]`) rather than omitted. This is required for OpenAI's
+ * `strict: true` Structured Outputs mode, which mandates that every object
+ * property appear in `required` and every object set
+ * `additionalProperties: false` at every nesting level (see
+ * `src/providers/openai.ts`). Gemini and Anthropic both tolerate this shape
+ * fine — a model returning `null` for these fields is equivalent to
+ * omitting them from the caller's perspective.
+ */
 const dataItemSchema: JSONSchemaObject = {
   type: "object",
   properties: {
     label: { type: "string", description: "The label or categories name (e.g. 'Comida', 'Alquiler', 'Enero')" },
     value: { type: "number", description: "The primary numeric value (e.g. 1500, 350)" },
-    secondaryValue: { type: "string", description: "An optional secondary text, state, or currency format (e.g. '$1,500.00', 'Completo', 'Alta')" },
-    color: { type: "string", description: "Suggested Tailwind color base name: 'emerald', 'sky', 'rose', 'amber', 'indigo', 'violet', 'orange'" },
+    secondaryValue: { type: ["string", "null"], description: "An optional secondary text, state, or currency format (e.g. '$1,500.00', 'Completo', 'Alta'), or null when not applicable." },
+    color: { type: ["string", "null"], description: "Suggested Tailwind color base name: 'emerald', 'sky', 'rose', 'amber', 'indigo', 'violet', 'orange', or null when not applicable." },
   },
-  required: ["label", "value"],
+  required: ["label", "value", "secondaryValue", "color"],
+  additionalProperties: false,
 };
 
 /** Core `data: DataItem[]` fragment shared by every default entry. */
@@ -697,22 +709,30 @@ function GenericFallback({ payload }: { payload: CardPayload }) {
 // Registry
 // ---------------------------------------------------------------------------
 
+// Both config schemas below list every property in `required` (nullable
+// where optional) and set `additionalProperties: false` — same OpenAI
+// `strict: true` requirement explained above `dataItemSchema`.
+
 const chartConfigSchema: JSONSchemaObject = {
   type: "object",
   properties: {
-    type: { type: "string", description: "The visual style of the chart: 'bar', 'line', 'pie', or 'area'" },
-    xAxisKey: { type: "string", description: "Name of the key used for the X-axis (usually 'label')" },
-    yAxisKey: { type: "string", description: "Name of the key used for the Y-axis (usually 'value')" },
+    type: { type: "string", enum: ["bar", "line", "pie", "area"], description: "The visual style of the chart." },
+    xAxisKey: { type: ["string", "null"], description: "Name of the key used for the X-axis (usually 'label'), or null if not applicable." },
+    yAxisKey: { type: ["string", "null"], description: "Name of the key used for the Y-axis (usually 'value'), or null if not applicable." },
   },
+  required: ["type", "xAxisKey", "yAxisKey"],
+  additionalProperties: false,
   description: "Required configuration if componentType is 'chart'",
 };
 
 const alertConfigSchema: JSONSchemaObject = {
   type: "object",
   properties: {
-    status: { type: "string", description: "The status indicator: 'success', 'warning', 'info', or 'error'" },
-    actionLabel: { type: "string", description: "The button or link text for a suggested primary call to action" },
+    status: { type: "string", enum: ["success", "warning", "info", "error"], description: "The status indicator." },
+    actionLabel: { type: ["string", "null"], description: "The button or link text for a suggested primary call to action, or null if not applicable." },
   },
+  required: ["status", "actionLabel"],
+  additionalProperties: false,
   description: "Required configuration if componentType is 'alert'",
 };
 
