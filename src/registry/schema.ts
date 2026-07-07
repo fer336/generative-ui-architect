@@ -4,11 +4,15 @@ import type { JSONSchemaObject, ComponentRegistryEntry } from "./componentRegist
 /**
  * Assembles the single provider-agnostic JSON Schema shared by every
  * `LLMProvider` adapter. This is plain JSON Schema — NOT Gemini's
- * `Type`-enum tree. The Gemini adapter (a later slice) is responsible for
- * translating this into its own `Type` tree at its own boundary.
+ * `Type`-enum tree. The Gemini adapter is responsible for translating this
+ * into its own `Type` tree at its own boundary
+ * (`src/providers/gemini.ts#jsonSchemaToGeminiType`).
  *
- * Not wired into `server.ts` yet in this slice — built but unused until
- * the provider-adapter slice lands.
+ * The output is authored to satisfy OpenAI's `strict: true` Structured
+ * Outputs requirements directly (every property in `required`,
+ * `additionalProperties: false` at every level) so it can be passed
+ * unmodified to all 3 provider adapters. Wired into `server.ts` as of the
+ * provider-adapter slice.
  */
 export function assembleResponseSchema(
   registry: Record<string, ComponentRegistryEntry> = componentRegistry
@@ -30,21 +34,42 @@ export function assembleResponseSchema(
     },
   };
 
+  // Every top-level key present in `properties` must also appear in
+  // `required` for OpenAI's `strict: true` Structured Outputs mode
+  // (see `src/providers/openai.ts`). Keys only relevant to some component
+  // types (e.g. `chartConfig`, `alertConfig`) are still added to `required`
+  // but made nullable via `anyOf: [..., {type: "null"}]` below — a model
+  // returns `null` instead of omitting the key when it doesn't apply.
+  const required = new Set<string>(["componentType", "explanation", "title"]);
+  const nullableConfigKeys = new Set<string>();
+
   for (const entry of Object.values(registry)) {
     const entryProperties = (entry.schema as { properties?: Record<string, unknown> }).properties;
     if (entryProperties) {
-      Object.assign(properties, entryProperties);
+      for (const [key, value] of Object.entries(entryProperties)) {
+        properties[key] = value;
+        required.add(key);
+      }
     }
 
     if (entry.configKey && entry.configSchema) {
       properties[entry.configKey] = entry.configSchema;
+      nullableConfigKeys.add(entry.configKey);
     }
+  }
+
+  for (const key of nullableConfigKeys) {
+    required.add(key);
+    properties[key] = {
+      anyOf: [properties[key], { type: "null" }],
+    };
   }
 
   return {
     type: "object",
     properties,
-    required: ["componentType", "explanation", "title", "data"],
+    required: Array.from(required),
+    additionalProperties: false,
   };
 }
 
